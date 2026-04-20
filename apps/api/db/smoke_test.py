@@ -23,9 +23,8 @@ def main() -> None:
             market_id=market.id,
             best_bid=Decimal("0.4700"),
             best_ask=Decimal("0.5200"),
-            last_traded_price=Decimal("0.5000"),
-            bid_size=Decimal("100.0000"),
-            ask_size=Decimal("120.0000"),
+            bid_depth_usd=Decimal("47.0000"),
+            ask_depth_usd=Decimal("62.4000"),
             captured_at=datetime.now(timezone.utc),
         )
         session.add(snapshot)
@@ -43,6 +42,7 @@ def main() -> None:
                 "market_id": stored_market.id if stored_market else None,
                 "snapshot_id": stored_snapshot.id if stored_snapshot else None,
                 "best_bid": str(stored_snapshot.best_bid) if stored_snapshot else None,
+                "bid_depth_usd": str(stored_snapshot.bid_depth_usd) if stored_snapshot else None,
             }
         )
 
