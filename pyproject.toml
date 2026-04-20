@@ -5,6 +5,7 @@ description = "Polymarket arbitrage monorepo"
 requires-python = ">=3.11"
 dependencies = [
     "alembic>=1.14.0,<2.0.0",
+    "certifi>=2024.8.30,<2027.0.0",
     "fastapi>=0.115.0,<1.0.0",
     "psycopg[binary]>=3.2.0,<4.0.0",
     "pydantic-settings>=2.6.0,<3.0.0",
