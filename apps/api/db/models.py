@@ -43,9 +43,8 @@ class MarketSnapshot(Base):
     market_id: Mapped[int] = mapped_column(ForeignKey("markets.id", ondelete="CASCADE"), index=True)
     best_bid: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
     best_ask: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
-    last_traded_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
-    bid_size: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
-    ask_size: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
+    bid_depth_usd: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
+    ask_depth_usd: Mapped[Decimal | None] = mapped_column(Numeric(18, 4))
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

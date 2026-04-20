@@ -4,12 +4,17 @@ import argparse
 import logging
 import time
 
+from sqlalchemy import func, select
+
+from apps.api.db.models import MarketSnapshot
+from apps.api.db.session import SessionLocal
 from apps.worker.integrations.polymarket import PolymarketClient
+from apps.worker.persistence import persist_poll_result
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Poll Polymarket markets and order books."
+        description="Poll Polymarket order books and persist market snapshots."
     )
     parser.add_argument("--market-limit", type=int, default=5)
     parser.add_argument("--market-sample-size", type=int, default=2)
@@ -37,27 +42,27 @@ def main() -> None:
             market_limit=args.market_limit,
             market_sample_size=args.market_sample_size,
         )
+
+        with SessionLocal() as session:
+            persisted = persist_poll_result(session, poll_result)
+            snapshot_count = session.scalar(select(func.count()).select_from(MarketSnapshot))
+
         logging.info(
-            "Fetched %s markets and %s sampled order book sets",
-            len(poll_result.raw_markets),
-            len(poll_result.sampled_order_books),
+            "Persisted %s market snapshots. total_snapshots=%s",
+            len(persisted),
+            snapshot_count,
         )
-        for market in poll_result.sampled_markets:
-            snapshots = poll_result.sampled_order_books.get(market.market_id, [])
+        for snapshot in persisted:
             logging.info(
-                "market=%s question=%s token_count=%s order_books=%s",
-                market.market_id,
-                market.question,
-                len(market.tokens),
-                [
-                    {
-                        "token_id": snapshot.token_id,
-                        "bids": len(snapshot.bids),
-                        "asks": len(snapshot.asks),
-                        "timestamp": snapshot.timestamp,
-                    }
-                    for snapshot in snapshots
-                ],
+                "snapshot market=%s local_market_id=%s snapshot_id=%s captured_at=%s best_bid=%s best_ask=%s bid_depth_usd=%s ask_depth_usd=%s",
+                snapshot.polymarket_market_id,
+                snapshot.market_id,
+                snapshot.snapshot_id,
+                snapshot.captured_at.isoformat(),
+                snapshot.best_bid,
+                snapshot.best_ask,
+                snapshot.bid_depth_usd,
+                snapshot.ask_depth_usd,
             )
 
         completed_iterations += 1
