@@ -97,4 +97,60 @@ class DetectedOpportunity(Base):
         default="detected",
         server_default=text("'detected'"),
     )
+    validation_status: Mapped[str | None] = mapped_column(String(50))
+    validation_reason: Mapped[str | None] = mapped_column(String(50))
+    validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     raw_context: Mapped[dict | None] = mapped_column(JSON)
+
+    simulations: Mapped[list["ExecutionSimulation"]] = relationship(
+        back_populates="opportunity",
+        cascade="all, delete-orphan",
+    )
+
+
+class ExecutionSimulation(Base):
+    __tablename__ = "execution_simulations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    opportunity_id: Mapped[int] = mapped_column(
+        ForeignKey("detected_opportunities.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    simulated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    simulation_status: Mapped[str] = mapped_column(String(50), nullable=False)
+    intended_size_usd: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    executable_size_usd: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    gross_cost_usd: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    gross_payout_usd: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    estimated_fees_usd: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    estimated_slippage_usd: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    estimated_net_edge_usd: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    fill_completion_ratio: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    simulation_reason: Mapped[str | None] = mapped_column(String(50))
+    raw_context: Mapped[dict | None] = mapped_column(JSON)
+
+    opportunity: Mapped["DetectedOpportunity"] = relationship(back_populates="simulations")
+
+
+class KpiSnapshot(Base):
+    __tablename__ = "kpi_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+    total_opportunities: Mapped[int] = mapped_column(nullable=False)
+    valid_opportunities: Mapped[int] = mapped_column(nullable=False)
+    executable_opportunities: Mapped[int] = mapped_column(nullable=False)
+    partial_opportunities: Mapped[int] = mapped_column(nullable=False)
+    rejected_opportunities: Mapped[int] = mapped_column(nullable=False)
+    avg_real_edge: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    avg_fill_ratio: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    false_positive_rate: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+    total_intended_capital: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    total_executable_capital: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
+    raw_context: Mapped[dict] = mapped_column(JSON, nullable=False)

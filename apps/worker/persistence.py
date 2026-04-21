@@ -67,6 +67,10 @@ def _get_or_create_market(session: Session, market_record: MarketRecord) -> Mark
             polymarket_market_id=market_record.market_id,
             question=market_record.question,
             slug=market_record.slug,
+            condition_id=market_record.condition_id,
+            event_id=market_record.event_id,
+            event_slug=market_record.event_slug,
+            neg_risk=market_record.neg_risk,
         )
         session.add(market)
         session.flush()
@@ -74,6 +78,10 @@ def _get_or_create_market(session: Session, market_record: MarketRecord) -> Mark
 
     market.question = market_record.question
     market.slug = market_record.slug
+    market.condition_id = market_record.condition_id
+    market.event_id = market_record.event_id
+    market.event_slug = market_record.event_slug
+    market.neg_risk = market_record.neg_risk
     market.status = "active"
     return market
 

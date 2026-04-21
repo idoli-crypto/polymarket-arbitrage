@@ -25,7 +25,7 @@ Calculate fees, slippage, and depth
 Perform semantic validation based on rules
 Simulate execution
 Compute KPI metrics
-Provide monitoring dashboard
+Store KPI snapshots
 Out of Scope (V1)
 Real trade execution
 Real position management
@@ -75,16 +75,16 @@ Time to Execution
 Capital Lock Time
 Slippage Cost
 False Positive Rate
-6. Web Dashboard
-Opportunity display
-KPI monitoring
-System status
-Market details
+6. Measurement Storage
+Persist KPI snapshots
+Track executable-edge trends over time
+Separate validation false positives from execution failures
+Preserve raw KPI context for later analysis
 4. Data Flow
 
 Unified pipeline:
 
-ingest → normalize → detect → validate → simulate → measure → display
+ingest → normalize → detect → validate → simulate → measure → store
 
 5. Data Layer
 
@@ -96,7 +96,7 @@ detected_opportunities
 semantic_links
 detector_runs
 execution_simulations
-kpi_daily
+kpi_snapshots
 
 Strict separation between:
 
@@ -189,7 +189,7 @@ Net edge is calculated
 Semantic validation works
 Execution simulation runs
 KPI is calculated
-Dashboard displays data
+KPI snapshots are stored
 12. Future Phases
 
 Next phase:
