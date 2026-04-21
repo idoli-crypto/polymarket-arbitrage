@@ -1,0 +1,282 @@
+:root {
+  color-scheme: light;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(255, 210, 160, 0.35), transparent 28%),
+    linear-gradient(180deg, #f6f0e8 0%, #fbfaf7 42%, #f2f6f5 100%);
+  color: #17211d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.shell {
+  width: min(1240px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 32px 0 56px;
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: flex-start;
+  margin-bottom: 24px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #9c4f1c;
+}
+
+.hero h1,
+.panel h2 {
+  margin: 0;
+  font-family: "IBM Plex Serif", Georgia, serif;
+}
+
+.hero h1 {
+  font-size: clamp(2rem, 4vw, 3.4rem);
+  line-height: 0.95;
+}
+
+.subtitle,
+.panel p {
+  margin: 10px 0 0;
+  color: #52605b;
+  max-width: 72ch;
+}
+
+.status-chip {
+  border: 1px solid rgba(35, 51, 45, 0.12);
+  border-radius: 999px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.85);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.overview-grid,
+.content-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.overview-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 16px;
+}
+
+.content-grid {
+  grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
+  margin-bottom: 16px;
+}
+
+.panel,
+.metric-card {
+  border: 1px solid rgba(35, 51, 45, 0.1);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 14px 40px rgba(36, 54, 47, 0.08);
+}
+
+.metric-card {
+  padding: 18px 20px;
+}
+
+.metric-card span {
+  display: block;
+  color: #52605b;
+  margin-bottom: 14px;
+}
+
+.metric-card strong {
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.panel {
+  padding: 20px;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.input,
+.select {
+  border: 1px solid rgba(35, 51, 45, 0.14);
+  border-radius: 12px;
+  background: #fffdf9;
+  padding: 10px 12px;
+  min-height: 44px;
+}
+
+.input {
+  min-width: 220px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 12px 10px;
+  border-bottom: 1px solid rgba(35, 51, 45, 0.08);
+  text-align: left;
+  white-space: nowrap;
+}
+
+th {
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6a7772;
+}
+
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.stats-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px 16px;
+  margin: 18px 0 0;
+}
+
+.stats-list dt {
+  color: #52605b;
+}
+
+.stats-list dd {
+  margin: 0;
+  text-align: right;
+  font-weight: 700;
+}
+
+.health-list {
+  margin: 18px 0 0;
+}
+
+.health-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(35, 51, 45, 0.08);
+}
+
+.health-row:last-child {
+  border-bottom: 0;
+}
+
+.health-row dt {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.78rem;
+  color: #6a7772;
+}
+
+.health-row dd {
+  margin: 6px 0 0;
+  color: #23332d;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.badge.ok {
+  color: #1b5b2e;
+  background: rgba(98, 190, 112, 0.16);
+}
+
+.badge.missing {
+  color: #8b3535;
+  background: rgba(221, 116, 116, 0.14);
+}
+
+.empty-state,
+.error-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 120px;
+  color: #52605b;
+}
+
+.error-panel {
+  margin-bottom: 16px;
+  color: #8b3535;
+  font-weight: 600;
+}
+
+@media (max-width: 1000px) {
+  .overview-grid,
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .panel-header,
+  .hero {
+    flex-direction: column;
+  }
+
+  .toolbar {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .input {
+    min-width: 0;
+  }
+}
