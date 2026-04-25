@@ -10,88 +10,15 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from apps.api.db.base import Base
-from apps.api.db.models import DetectedOpportunity, ExecutionSimulation, KpiSnapshot
-from apps.worker.metrics.kpi import calculate_and_persist_kpi_snapshot, derive_opportunity_kpi
+from apps.api.db.models import DetectedOpportunity, KpiRunSummary, KpiSnapshot, OpportunityKpiSnapshot
+from apps.api.services.opportunity_classification import DetectionFamily
+from apps.worker.metrics.kpi import (
+    OpportunityKpiSnapshotInput,
+    persist_kpi_run,
+)
 
 
-class OpportunityKpiUnitTests(unittest.TestCase):
-    def test_derive_opportunity_kpi_uses_stored_fill_ratio_and_weighted_capital_fields(self) -> None:
-        opportunity = DetectedOpportunity(
-            id=10,
-            detection_window_start=datetime(2026, 4, 21, 10, 0, tzinfo=timezone.utc),
-            event_group_key="event-1",
-            involved_market_ids=[1, 2],
-            opportunity_type="neg_risk_long_yes_bundle",
-            outcome_count=2,
-            gross_price_sum=Decimal("0.7000"),
-            gross_gap=Decimal("0.3000"),
-            detector_version="neg_risk_v1",
-            validation_status="valid",
-        )
-        simulation = ExecutionSimulation(
-            id=20,
-            opportunity_id=10,
-            simulated_at=datetime(2026, 4, 21, 10, 5, tzinfo=timezone.utc),
-            simulation_status="partially_executable",
-            intended_size_usd=Decimal("100.0000"),
-            executable_size_usd=Decimal("25.0000"),
-            gross_cost_usd=Decimal("17.5000"),
-            gross_payout_usd=Decimal("25.0000"),
-            estimated_fees_usd=Decimal("0.0000"),
-            estimated_slippage_usd=Decimal("0.0000"),
-            estimated_net_edge_usd=Decimal("7.5000"),
-            fill_completion_ratio=Decimal("0.2500"),
-            simulation_reason="partially_executable",
-            raw_context={"simulation_version": "execution_sim_v1"},
-        )
-
-        result = derive_opportunity_kpi(simulation=simulation, opportunity=opportunity)
-
-        self.assertEqual(result.opportunity_id, 10)
-        self.assertEqual(result.real_edge, Decimal("7.5000"))
-        self.assertEqual(result.fill_ratio, Decimal("0.2500"))
-        self.assertEqual(result.execution_quality, Decimal("0.2500"))
-        self.assertEqual(result.slippage_cost, Decimal("0.0000"))
-        self.assertEqual(result.capital_efficiency, Decimal("0.0750"))
-
-    def test_derive_opportunity_kpi_is_zero_safe_for_rejected_rows(self) -> None:
-        opportunity = DetectedOpportunity(
-            id=11,
-            detection_window_start=datetime(2026, 4, 21, 10, 0, tzinfo=timezone.utc),
-            event_group_key="event-2",
-            involved_market_ids=[3, 4],
-            opportunity_type="neg_risk_long_yes_bundle",
-            outcome_count=2,
-            gross_price_sum=Decimal("1.1000"),
-            gross_gap=Decimal("-0.1000"),
-            detector_version="neg_risk_v1",
-            validation_status="valid",
-        )
-        simulation = ExecutionSimulation(
-            id=21,
-            opportunity_id=11,
-            simulated_at=datetime(2026, 4, 21, 10, 6, tzinfo=timezone.utc),
-            simulation_status="rejected",
-            intended_size_usd=Decimal("100.0000"),
-            executable_size_usd=Decimal("0.0000"),
-            gross_cost_usd=Decimal("0.0000"),
-            gross_payout_usd=Decimal("0.0000"),
-            estimated_fees_usd=Decimal("0.0000"),
-            estimated_slippage_usd=Decimal("0.0000"),
-            estimated_net_edge_usd=Decimal("0.0000"),
-            fill_completion_ratio=Decimal("0.0000"),
-            simulation_reason="insufficient_depth",
-            raw_context={"simulation_version": "execution_sim_v1"},
-        )
-
-        result = derive_opportunity_kpi(simulation=simulation, opportunity=opportunity)
-
-        self.assertEqual(result.real_edge, Decimal("0.0000"))
-        self.assertEqual(result.fill_ratio, Decimal("0.0000"))
-        self.assertEqual(result.capital_efficiency, Decimal("0.0000"))
-
-
-class KpiSnapshotIntegrationTests(unittest.TestCase):
+class KpiPersistenceIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         database_path = Path(self.temp_dir.name) / "kpi-test.db"
@@ -108,173 +35,371 @@ class KpiSnapshotIntegrationTests(unittest.TestCase):
         self.engine.dispose()
         self.temp_dir.cleanup()
 
-    def test_calculate_and_persist_kpi_snapshot_uses_validated_simulations_and_validation_false_positives(
-        self,
-    ) -> None:
+    def test_persist_kpi_run_creates_append_only_snapshots_and_run_summary(self) -> None:
         with self.SessionLocal() as session:
-            valid_executable = DetectedOpportunity(
-                detection_window_start=datetime(2026, 4, 21, 10, 0, tzinfo=timezone.utc),
-                event_group_key="event-1",
-                involved_market_ids=[1, 2],
-                opportunity_type="neg_risk_long_yes_bundle",
-                outcome_count=2,
-                gross_price_sum=Decimal("0.6000"),
-                gross_gap=Decimal("0.4000"),
-                detector_version="neg_risk_v1",
-                validation_status="valid",
-            )
-            valid_partial = DetectedOpportunity(
-                detection_window_start=datetime(2026, 4, 21, 10, 1, tzinfo=timezone.utc),
+            first = self._create_opportunity(session, opportunity_id=1, event_group_key="event-1")
+            second = self._create_opportunity(
+                session,
+                opportunity_id=2,
                 event_group_key="event-2",
-                involved_market_ids=[3, 4],
-                opportunity_type="neg_risk_long_yes_bundle",
-                outcome_count=2,
-                gross_price_sum=Decimal("0.6500"),
-                gross_gap=Decimal("0.3500"),
-                detector_version="neg_risk_v1",
-                validation_status="valid",
+                family=DetectionFamily.CROSS_MARKET_LOGIC,
             )
-            valid_rejected = DetectedOpportunity(
-                detection_window_start=datetime(2026, 4, 21, 10, 2, tzinfo=timezone.utc),
-                event_group_key="event-3",
-                involved_market_ids=[5, 6],
-                opportunity_type="neg_risk_long_yes_bundle",
-                outcome_count=2,
-                gross_price_sum=Decimal("0.9800"),
-                gross_gap=Decimal("0.0200"),
-                detector_version="neg_risk_v1",
-                validation_status="valid",
-            )
-            validation_rejected = DetectedOpportunity(
-                detection_window_start=datetime(2026, 4, 21, 10, 3, tzinfo=timezone.utc),
-                event_group_key="event-4",
-                involved_market_ids=[7, 8],
-                opportunity_type="neg_risk_long_yes_bundle",
-                outcome_count=2,
-                gross_price_sum=Decimal("1.0200"),
-                gross_gap=Decimal("-0.0200"),
-                detector_version="neg_risk_v1",
-                validation_status="rejected",
-            )
-            simulated_but_not_valid = DetectedOpportunity(
-                detection_window_start=datetime(2026, 4, 21, 10, 4, tzinfo=timezone.utc),
-                event_group_key="event-5",
-                involved_market_ids=[9, 10],
-                opportunity_type="neg_risk_long_yes_bundle",
-                outcome_count=2,
-                gross_price_sum=Decimal("0.9000"),
-                gross_gap=Decimal("0.1000"),
-                detector_version="neg_risk_v1",
-                validation_status="rejected",
-            )
-            session.add_all(
+            third = self._create_opportunity(session, opportunity_id=3, event_group_key="event-3")
+            session.commit()
+
+            run_summary = persist_kpi_run(
+                session,
                 [
-                    valid_executable,
-                    valid_partial,
-                    valid_rejected,
-                    validation_rejected,
-                    simulated_but_not_valid,
-                ]
-            )
-            session.flush()
-            session.add_all(
-                [
-                    ExecutionSimulation(
-                        opportunity_id=valid_executable.id,
-                        simulated_at=datetime(2026, 4, 21, 11, 0, tzinfo=timezone.utc),
-                        simulation_status="executable",
+                    self._build_input(
+                        opportunity=first,
+                        detection_window_start=datetime(2026, 4, 21, 10, 0, tzinfo=timezone.utc),
+                        snapshot_timestamp=datetime(2026, 4, 21, 10, 5, tzinfo=timezone.utc),
+                        final_status="valid",
+                        rejection_reason=None,
+                        rule_status="valid",
+                        semantic_status="valid",
+                        resolution_status="valid",
+                        execution_status="valid",
+                        simulation_status="valid",
+                        fee_adjusted_edge=Decimal("0.3000"),
+                        fill_completion_ratio=Decimal("1.0000"),
+                        execution_feasible=True,
+                        capital_lock_estimate_hours=Decimal("0.0100"),
                         intended_size_usd=Decimal("100.0000"),
                         executable_size_usd=Decimal("100.0000"),
-                        gross_cost_usd=Decimal("70.0000"),
-                        gross_payout_usd=Decimal("100.0000"),
-                        estimated_fees_usd=Decimal("0.0000"),
-                        estimated_slippage_usd=Decimal("0.0000"),
-                        estimated_net_edge_usd=Decimal("30.0000"),
-                        fill_completion_ratio=Decimal("1.0000"),
-                        simulation_reason="executable",
-                        raw_context={"simulation_version": "execution_sim_v1"},
                     ),
-                    ExecutionSimulation(
-                        opportunity_id=valid_partial.id,
-                        simulated_at=datetime(2026, 4, 21, 11, 1, tzinfo=timezone.utc),
-                        simulation_status="partially_executable",
-                        intended_size_usd=Decimal("200.0000"),
-                        executable_size_usd=Decimal("50.0000"),
-                        gross_cost_usd=Decimal("35.0000"),
-                        gross_payout_usd=Decimal("50.0000"),
-                        estimated_fees_usd=Decimal("0.0000"),
-                        estimated_slippage_usd=Decimal("0.0000"),
-                        estimated_net_edge_usd=Decimal("15.0000"),
-                        fill_completion_ratio=Decimal("0.2500"),
-                        simulation_reason="partially_executable",
-                        raw_context={"simulation_version": "execution_sim_v1"},
+                    self._build_input(
+                        opportunity=second,
+                        detection_window_start=datetime(2026, 4, 21, 10, 0, tzinfo=timezone.utc),
+                        snapshot_timestamp=datetime(2026, 4, 21, 10, 6, tzinfo=timezone.utc),
+                        final_status="rejected",
+                        rejection_reason="dispute_flag_present",
+                        rule_status="valid",
+                        semantic_status="valid",
+                        resolution_status="risky",
+                        execution_status=None,
+                        simulation_status=None,
+                        fee_adjusted_edge=None,
+                        fill_completion_ratio=None,
+                        execution_feasible=None,
+                        capital_lock_estimate_hours=None,
+                        intended_size_usd=None,
+                        executable_size_usd=None,
                     ),
-                    ExecutionSimulation(
-                        opportunity_id=valid_rejected.id,
-                        simulated_at=datetime(2026, 4, 21, 11, 2, tzinfo=timezone.utc),
-                        simulation_status="rejected",
-                        intended_size_usd=Decimal("50.0000"),
-                        executable_size_usd=Decimal("0.0000"),
-                        gross_cost_usd=Decimal("0.0000"),
-                        gross_payout_usd=Decimal("0.0000"),
-                        estimated_fees_usd=Decimal("0.0000"),
-                        estimated_slippage_usd=Decimal("0.0000"),
-                        estimated_net_edge_usd=Decimal("0.0000"),
-                        fill_completion_ratio=Decimal("0.0000"),
-                        simulation_reason="insufficient_edge",
-                        raw_context={"simulation_version": "execution_sim_v1"},
+                    self._build_input(
+                        opportunity=third,
+                        detection_window_start=datetime(2026, 4, 21, 10, 0, tzinfo=timezone.utc),
+                        snapshot_timestamp=datetime(2026, 4, 21, 10, 7, tzinfo=timezone.utc),
+                        final_status="rejected",
+                        rejection_reason="partial_fill_detected",
+                        rule_status="valid",
+                        semantic_status="valid",
+                        resolution_status="valid",
+                        execution_status="valid",
+                        simulation_status="invalid",
+                        fee_adjusted_edge=Decimal("0.1200"),
+                        fill_completion_ratio=Decimal("0.4000"),
+                        execution_feasible=False,
+                        capital_lock_estimate_hours=Decimal("0.0200"),
+                        intended_size_usd=Decimal("100.0000"),
+                        executable_size_usd=Decimal("40.0000"),
                     ),
-                    ExecutionSimulation(
-                        opportunity_id=simulated_but_not_valid.id,
-                        simulated_at=datetime(2026, 4, 21, 11, 3, tzinfo=timezone.utc),
-                        simulation_status="executable",
-                        intended_size_usd=Decimal("500.0000"),
-                        executable_size_usd=Decimal("500.0000"),
-                        gross_cost_usd=Decimal("450.0000"),
-                        gross_payout_usd=Decimal("500.0000"),
-                        estimated_fees_usd=Decimal("0.0000"),
-                        estimated_slippage_usd=Decimal("0.0000"),
-                        estimated_net_edge_usd=Decimal("50.0000"),
-                        fill_completion_ratio=Decimal("1.0000"),
-                        simulation_reason="executable",
-                        raw_context={"simulation_version": "execution_sim_v1"},
-                    ),
-                ]
+                ],
+                run_started_at=datetime(2026, 4, 21, 10, 4, tzinfo=timezone.utc),
+                run_completed_at=datetime(2026, 4, 21, 10, 8, tzinfo=timezone.utc),
             )
             session.commit()
 
-            snapshot = calculate_and_persist_kpi_snapshot(session)
-
-            self.assertEqual(snapshot.total_opportunities, 4)
-            self.assertEqual(snapshot.valid_opportunities, 3)
-            self.assertEqual(snapshot.executable_opportunities, 1)
-            self.assertEqual(snapshot.partial_opportunities, 1)
-            self.assertEqual(snapshot.rejected_opportunities, 1)
-            self.assertEqual(snapshot.avg_real_edge, Decimal("0.1286"))
-            self.assertEqual(snapshot.avg_fill_ratio, Decimal("0.4167"))
-            self.assertEqual(snapshot.false_positive_rate, Decimal("0.4000"))
-            self.assertEqual(snapshot.total_intended_capital, Decimal("350.0000"))
-            self.assertEqual(snapshot.total_executable_capital, Decimal("150.0000"))
+            assert run_summary is not None
+            self.assertEqual(run_summary.total_opportunities, 3)
+            self.assertEqual(run_summary.valid_after_rule, 3)
+            self.assertEqual(run_summary.valid_after_semantic, 3)
+            self.assertEqual(run_summary.valid_after_resolution, 2)
+            self.assertEqual(run_summary.valid_after_executable, 2)
+            self.assertEqual(run_summary.valid_after_simulation, 1)
+            self.assertEqual(run_summary.avg_executable_edge, Decimal("0.2100"))
+            self.assertEqual(run_summary.avg_fill_ratio, Decimal("0.7000"))
+            self.assertEqual(run_summary.avg_capital_lock, Decimal("0.0150"))
+            self.assertEqual(run_summary.false_positive_rate, Decimal("0.6667"))
             self.assertEqual(
-                snapshot.raw_context["validation_summary"]["rejected_validated_opportunities"],
-                2,
+                run_summary.family_distribution,
+                {
+                    DetectionFamily.CROSS_MARKET_LOGIC.value: 1,
+                    DetectionFamily.NEG_RISK_CONVERSION.value: 2,
+                },
             )
 
-            stored = session.scalars(select(KpiSnapshot)).all()
-            self.assertEqual(len(stored), 1)
-            self.assertEqual(stored[0].raw_context["simulation_summary"]["valid_simulated_opportunities"], 3)
+            stored_run = session.scalar(select(KpiRunSummary))
+            assert stored_run is not None
+            self.assertEqual(stored_run.raw_context["absence_decay_count"], 0)
+            self.assertEqual(stored_run.raw_context["rejection_distribution"]["resolution"], 1)
+            self.assertEqual(stored_run.raw_context["rejection_distribution"]["simulation"], 1)
 
-    def test_calculate_and_persist_kpi_snapshot_is_zero_safe_for_empty_state(self) -> None:
+            stored_snapshots = session.scalars(
+                select(OpportunityKpiSnapshot).order_by(OpportunityKpiSnapshot.opportunity_id.asc())
+            ).all()
+            self.assertEqual(len(stored_snapshots), 3)
+
+            self.assertEqual(stored_snapshots[0].validation_stage_reached, "simulation_pass")
+            self.assertEqual(stored_snapshots[0].final_status, "valid")
+            self.assertIsNone(stored_snapshots[0].rejection_stage)
+            self.assertEqual(stored_snapshots[0].decay_status, "alive")
+
+            self.assertEqual(stored_snapshots[1].validation_stage_reached, "semantic_pass")
+            self.assertEqual(stored_snapshots[1].rejection_stage, "resolution")
+            self.assertEqual(stored_snapshots[1].rejection_reason, "dispute_flag_present")
+            self.assertFalse(stored_snapshots[1].resolution_pass)
+            self.assertEqual(stored_snapshots[1].decay_status, "decayed")
+
+            self.assertEqual(stored_snapshots[2].validation_stage_reached, "executable_pass")
+            self.assertEqual(stored_snapshots[2].rejection_stage, "simulation")
+            self.assertEqual(stored_snapshots[2].fill_completion_ratio, Decimal("0.4000"))
+            self.assertFalse(stored_snapshots[2].execution_feasible)
+
+            legacy_snapshot = session.scalar(select(KpiSnapshot))
+            assert legacy_snapshot is not None
+            self.assertEqual(legacy_snapshot.total_opportunities, 3)
+            self.assertEqual(legacy_snapshot.valid_opportunities, 1)
+            self.assertEqual(legacy_snapshot.executable_opportunities, 1)
+            self.assertEqual(legacy_snapshot.partial_opportunities, 1)
+            self.assertEqual(legacy_snapshot.rejected_opportunities, 2)
+            self.assertEqual(legacy_snapshot.avg_real_edge, Decimal("0.2100"))
+            self.assertEqual(legacy_snapshot.avg_fill_ratio, Decimal("0.7000"))
+            self.assertEqual(legacy_snapshot.total_intended_capital, Decimal("200.0000"))
+            self.assertEqual(legacy_snapshot.total_executable_capital, Decimal("140.0000"))
+
+    def test_persist_kpi_run_tracks_persistence_decay_and_reappearance(self) -> None:
         with self.SessionLocal() as session:
-            snapshot = calculate_and_persist_kpi_snapshot(session)
+            first = self._create_opportunity(session, opportunity_id=10, event_group_key="event-1")
+            second = self._create_opportunity(session, opportunity_id=11, event_group_key="event-1")
+            third = self._create_opportunity(session, opportunity_id=12, event_group_key="event-2")
+            fourth = self._create_opportunity(session, opportunity_id=13, event_group_key="event-1")
+            session.commit()
 
-            self.assertEqual(snapshot.total_opportunities, 0)
-            self.assertEqual(snapshot.valid_opportunities, 0)
-            self.assertEqual(snapshot.avg_real_edge, Decimal("0.0000"))
-            self.assertEqual(snapshot.avg_fill_ratio, Decimal("0.0000"))
-            self.assertEqual(snapshot.false_positive_rate, Decimal("0.0000"))
-            self.assertEqual(snapshot.total_intended_capital, Decimal("0.0000"))
-            self.assertEqual(snapshot.total_executable_capital, Decimal("0.0000"))
+            persist_kpi_run(
+                session,
+                [
+                    self._build_input(
+                        opportunity=first,
+                        detection_window_start=datetime(2026, 4, 21, 10, 0, tzinfo=timezone.utc),
+                        snapshot_timestamp=datetime(2026, 4, 21, 10, 5, tzinfo=timezone.utc),
+                        final_status="valid",
+                        rejection_reason=None,
+                        rule_status="valid",
+                        semantic_status="valid",
+                        resolution_status="valid",
+                        execution_status="valid",
+                        simulation_status="valid",
+                        fee_adjusted_edge=Decimal("0.2500"),
+                        fill_completion_ratio=Decimal("1.0000"),
+                        execution_feasible=True,
+                        capital_lock_estimate_hours=Decimal("0.0100"),
+                        intended_size_usd=Decimal("100.0000"),
+                        executable_size_usd=Decimal("100.0000"),
+                    )
+                ],
+                run_started_at=datetime(2026, 4, 21, 10, 4, tzinfo=timezone.utc),
+                run_completed_at=datetime(2026, 4, 21, 10, 5, tzinfo=timezone.utc),
+            )
+            session.commit()
+
+            persist_kpi_run(
+                session,
+                [
+                    self._build_input(
+                        opportunity=second,
+                        detection_window_start=datetime(2026, 4, 21, 10, 10, tzinfo=timezone.utc),
+                        snapshot_timestamp=datetime(2026, 4, 21, 10, 15, tzinfo=timezone.utc),
+                        final_status="valid",
+                        rejection_reason=None,
+                        rule_status="valid",
+                        semantic_status="valid",
+                        resolution_status="valid",
+                        execution_status="valid",
+                        simulation_status="valid",
+                        fee_adjusted_edge=Decimal("0.2200"),
+                        fill_completion_ratio=Decimal("1.0000"),
+                        execution_feasible=True,
+                        capital_lock_estimate_hours=Decimal("0.0110"),
+                        intended_size_usd=Decimal("100.0000"),
+                        executable_size_usd=Decimal("100.0000"),
+                    )
+                ],
+                run_started_at=datetime(2026, 4, 21, 10, 14, tzinfo=timezone.utc),
+                run_completed_at=datetime(2026, 4, 21, 10, 15, tzinfo=timezone.utc),
+            )
+            session.commit()
+
+            persist_kpi_run(
+                session,
+                [
+                    self._build_input(
+                        opportunity=third,
+                        detection_window_start=datetime(2026, 4, 21, 10, 20, tzinfo=timezone.utc),
+                        snapshot_timestamp=datetime(2026, 4, 21, 10, 21, tzinfo=timezone.utc),
+                        final_status="valid",
+                        rejection_reason=None,
+                        rule_status="valid",
+                        semantic_status="valid",
+                        resolution_status="valid",
+                        execution_status="valid",
+                        simulation_status="valid",
+                        fee_adjusted_edge=Decimal("0.1000"),
+                        fill_completion_ratio=Decimal("1.0000"),
+                        execution_feasible=True,
+                        capital_lock_estimate_hours=Decimal("0.0100"),
+                        intended_size_usd=Decimal("100.0000"),
+                        executable_size_usd=Decimal("100.0000"),
+                    )
+                ],
+                run_started_at=datetime(2026, 4, 21, 10, 20, tzinfo=timezone.utc),
+                run_completed_at=datetime(2026, 4, 21, 10, 21, tzinfo=timezone.utc),
+            )
+            session.commit()
+
+            persist_kpi_run(
+                session,
+                [
+                    self._build_input(
+                        opportunity=fourth,
+                        detection_window_start=datetime(2026, 4, 21, 10, 30, tzinfo=timezone.utc),
+                        snapshot_timestamp=datetime(2026, 4, 21, 10, 31, tzinfo=timezone.utc),
+                        final_status="valid",
+                        rejection_reason=None,
+                        rule_status="valid",
+                        semantic_status="valid",
+                        resolution_status="valid",
+                        execution_status="valid",
+                        simulation_status="valid",
+                        fee_adjusted_edge=Decimal("0.1800"),
+                        fill_completion_ratio=Decimal("1.0000"),
+                        execution_feasible=True,
+                        capital_lock_estimate_hours=Decimal("0.0090"),
+                        intended_size_usd=Decimal("100.0000"),
+                        executable_size_usd=Decimal("100.0000"),
+                    )
+                ],
+                run_started_at=datetime(2026, 4, 21, 10, 30, tzinfo=timezone.utc),
+                run_completed_at=datetime(2026, 4, 21, 10, 31, tzinfo=timezone.utc),
+            )
+            session.commit()
+
+            event_one_snapshots = session.scalars(
+                select(OpportunityKpiSnapshot)
+                .where(OpportunityKpiSnapshot.lineage_key == self._lineage_key_for(session, 10))
+                .order_by(OpportunityKpiSnapshot.snapshot_timestamp.asc(), OpportunityKpiSnapshot.id.asc())
+            ).all()
+
+            self.assertEqual(len(event_one_snapshots), 4)
+            self.assertEqual(self._as_utc(event_one_snapshots[0].first_seen_timestamp), datetime(2026, 4, 21, 10, 5, tzinfo=timezone.utc))
+            self.assertEqual(self._as_utc(event_one_snapshots[1].first_seen_timestamp), datetime(2026, 4, 21, 10, 5, tzinfo=timezone.utc))
+            self.assertEqual(self._as_utc(event_one_snapshots[1].last_seen_timestamp), datetime(2026, 4, 21, 10, 15, tzinfo=timezone.utc))
+            self.assertEqual(event_one_snapshots[1].persistence_duration_seconds, 600)
+            self.assertEqual(event_one_snapshots[2].rejection_stage, "persistence")
+            self.assertEqual(event_one_snapshots[2].rejection_reason, "no_longer_present")
+            self.assertEqual(self._as_utc(event_one_snapshots[2].snapshot_timestamp), datetime(2026, 4, 21, 10, 20, tzinfo=timezone.utc))
+            self.assertEqual(self._as_utc(event_one_snapshots[2].last_seen_timestamp), datetime(2026, 4, 21, 10, 15, tzinfo=timezone.utc))
+            self.assertEqual(event_one_snapshots[2].persistence_duration_seconds, 600)
+            self.assertEqual(event_one_snapshots[2].decay_status, "decayed")
+            self.assertEqual(event_one_snapshots[3].opportunity_id, 13)
+            self.assertEqual(self._as_utc(event_one_snapshots[3].first_seen_timestamp), datetime(2026, 4, 21, 10, 31, tzinfo=timezone.utc))
+            self.assertEqual(event_one_snapshots[3].persistence_duration_seconds, 0)
+            self.assertEqual(event_one_snapshots[3].decay_status, "alive")
+
+    def _create_opportunity(
+        self,
+        session,
+        *,
+        opportunity_id: int,
+        event_group_key: str,
+        family: DetectionFamily = DetectionFamily.NEG_RISK_CONVERSION,
+    ) -> DetectedOpportunity:
+        opportunity = DetectedOpportunity(
+            id=opportunity_id,
+            detection_window_start=datetime(2026, 4, 21, 9, opportunity_id, tzinfo=timezone.utc),
+            event_group_key=event_group_key,
+            involved_market_ids=[1, 2],
+            involved_market_ids_json=[1, 2],
+            opportunity_type="neg_risk_long_yes_bundle",
+            outcome_count=2,
+            gross_price_sum=Decimal("0.6300"),
+            gross_gap=Decimal("0.3700"),
+            family=family.value,
+            relation_type=None,
+            relation_direction=None,
+            detector_version="neg_risk_v1",
+            status="detected",
+        )
+        session.add(opportunity)
+        return opportunity
+
+    def _build_input(
+        self,
+        *,
+        opportunity: DetectedOpportunity,
+        detection_window_start: datetime,
+        snapshot_timestamp: datetime,
+        final_status: str,
+        rejection_reason: str | None,
+        rule_status: str,
+        semantic_status: str,
+        resolution_status: str,
+        execution_status: str | None,
+        simulation_status: str | None,
+        fee_adjusted_edge: Decimal | None,
+        fill_completion_ratio: Decimal | None,
+        execution_feasible: bool | None,
+        capital_lock_estimate_hours: Decimal | None,
+        intended_size_usd: Decimal | None,
+        executable_size_usd: Decimal | None,
+    ) -> OpportunityKpiSnapshotInput:
+        return OpportunityKpiSnapshotInput(
+            opportunity_id=opportunity.id,
+            event_group_key=opportunity.event_group_key,
+            involved_market_ids=list(opportunity.involved_market_ids),
+            opportunity_type=opportunity.opportunity_type,
+            family=opportunity.family,
+            relation_type=opportunity.relation_type,
+            relation_direction=opportunity.relation_direction,
+            detection_window_start=detection_window_start,
+            snapshot_timestamp=snapshot_timestamp,
+            final_status=final_status,
+            rejection_reason=rejection_reason,
+            s_logic=Decimal("1.0000"),
+            s_sem=Decimal("1.0000") if semantic_status == "valid" else None,
+            s_res=Decimal("1.0000") if resolution_status == "valid" else (Decimal("0.5000") if resolution_status == "risky" else None),
+            top_of_book_edge=Decimal("0.3500"),
+            depth_weighted_edge=Decimal("0.3300"),
+            fee_adjusted_edge=fee_adjusted_edge,
+            fill_completion_ratio=fill_completion_ratio,
+            execution_feasible=execution_feasible,
+            capital_lock_estimate_hours=capital_lock_estimate_hours,
+            detector_version=opportunity.detector_version,
+            validation_version="validation_v1",
+            simulation_version="simulation_v1" if simulation_status is not None else None,
+            rule_status=rule_status,
+            semantic_status=semantic_status,
+            resolution_status=resolution_status,
+            execution_status=execution_status,
+            simulation_status=simulation_status,
+            intended_size_usd=intended_size_usd,
+            executable_size_usd=executable_size_usd,
+        )
+
+    def _lineage_key_for(self, session, opportunity_id: int) -> str:
+        snapshot = session.scalar(
+            select(OpportunityKpiSnapshot)
+            .where(OpportunityKpiSnapshot.opportunity_id == opportunity_id)
+            .order_by(OpportunityKpiSnapshot.id.asc())
+            .limit(1)
+        )
+        assert snapshot is not None
+        return snapshot.lineage_key
+
+    def _as_utc(self, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
 
 if __name__ == "__main__":

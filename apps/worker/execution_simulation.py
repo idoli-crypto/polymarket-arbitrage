@@ -7,10 +7,13 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from apps.api.db.models import DetectedOpportunity, ExecutionSimulation, MarketSnapshot
+from apps.api.db.models import DetectedOpportunity, ExecutionSimulation, Market, MarketSnapshot
+from apps.api.repositories.opportunities import attach_simulation_result
 from apps.worker.simulators.execution import (
     DEFAULT_INTENDED_SIZE_USD,
     ExecutionSimulationResult,
+    MONEY_PRECISION,
+    SIMULATION_VERSION,
     SimulationOpportunityInput,
     SimulationSnapshotInput,
     simulate_validated_opportunity,
@@ -90,6 +93,27 @@ def simulate_pending_validated_opportunities(
         )
         session.add(simulation)
         session.flush()
+        executable_edge = _derive_executable_edge(result)
+        opportunity.simulation_version = SIMULATION_VERSION
+        attach_simulation_result(
+            session,
+            opportunity.id,
+            simulation_mode="top_of_book_execution",
+            executable_edge=executable_edge,
+            fee_cost=result.estimated_fees_usd,
+            slippage_cost=result.estimated_slippage_usd,
+            estimated_fill_quality=result.fill_completion_ratio,
+            fill_completion_ratio=result.fill_completion_ratio,
+            execution_feasible=result.simulation_status == "executable",
+            min_executable_size=result.executable_size_usd,
+            persistence_seconds_estimate=None,
+            capital_lock_estimate_hours=None,
+            execution_risk_flag=result.simulation_reason,
+            suggested_notional_bucket=None,
+            simulation_version=SIMULATION_VERSION,
+            details_json=result.raw_context,
+            created_at=simulation.simulated_at,
+        )
         persisted.append(
             PersistedExecutionSimulation(
                 id=simulation.id,
@@ -126,6 +150,8 @@ def _load_latest_snapshots(
             MarketSnapshot.best_ask.label("best_ask"),
             MarketSnapshot.bid_depth_usd.label("bid_depth_usd"),
             MarketSnapshot.ask_depth_usd.label("ask_depth_usd"),
+            MarketSnapshot.order_book_json.label("order_book_json"),
+            Market.raw_market_json.label("raw_market_json"),
             func.row_number()
             .over(
                 partition_by=MarketSnapshot.market_id,
@@ -133,6 +159,7 @@ def _load_latest_snapshots(
             )
             .label("snapshot_rank"),
         )
+        .join(Market, Market.id == MarketSnapshot.market_id)
         .where(MarketSnapshot.market_id.in_(market_ids))
         .subquery()
     )
@@ -149,6 +176,8 @@ def _load_latest_snapshots(
             best_ask=row["best_ask"],
             bid_depth_usd=row["bid_depth_usd"],
             ask_depth_usd=row["ask_depth_usd"],
+            order_book_json=row["order_book_json"],
+            raw_market_json=row["raw_market_json"],
         )
 
     return latest_snapshot_by_market
@@ -163,3 +192,10 @@ def _merge_simulation_context(
     merged["execution_simulation_reason"] = result.simulation_reason
     merged["execution_simulation"] = result.raw_context
     return merged
+
+
+def _derive_executable_edge(result: ExecutionSimulationResult) -> Decimal | None:
+    if result.executable_size_usd <= Decimal("0"):
+        return None
+
+    return (result.estimated_net_edge_usd / result.executable_size_usd).quantize(MONEY_PRECISION)

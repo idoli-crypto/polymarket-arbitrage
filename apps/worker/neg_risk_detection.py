@@ -8,6 +8,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from apps.api.db.models import DetectedOpportunity, Market, MarketSnapshot
+from apps.api.repositories.opportunities import create_opportunity_extended
+from apps.api.services.opportunity_classification import (
+    OpportunityClassificationInput,
+    classify_opportunity,
+    merge_classification_context,
+)
 from apps.worker.detectors.neg_risk import (
     DETECTOR_VERSION,
     DetectionMarketInput,
@@ -66,7 +72,22 @@ def scan_and_persist_neg_risk_candidates(
             )
             continue
 
-        row = DetectedOpportunity(
+        question_texts = [
+            market["question"]
+            for market in candidate.raw_context.get("markets", [])
+            if market.get("question")
+        ]
+        classification = classify_opportunity(
+            OpportunityClassificationInput(
+                opportunity_type=candidate.opportunity_type,
+                detector_version=candidate.detector_version,
+                event_group_key=candidate.event_group_key,
+                involved_market_ids=tuple(candidate.involved_market_ids),
+                raw_context=candidate.raw_context,
+            )
+        )
+        row = create_opportunity_extended(
+            session,
             detection_window_start=candidate.detection_window_start,
             event_group_key=candidate.event_group_key,
             involved_market_ids=candidate.involved_market_ids,
@@ -75,11 +96,19 @@ def scan_and_persist_neg_risk_candidates(
             gross_price_sum=candidate.gross_price_sum,
             gross_gap=candidate.gross_gap,
             detector_version=candidate.detector_version,
+            classification=classification,
+            involved_market_ids_json=candidate.involved_market_ids,
+            question_texts_json=question_texts or None,
+            top_of_book_edge=candidate.gross_gap,
             status="detected",
-            raw_context=candidate.raw_context,
+            recommendation_eligibility=False,
+            raw_context=merge_classification_context(
+                candidate.raw_context,
+                classification,
+                detector_version=candidate.detector_version,
+                opportunity_type=candidate.opportunity_type,
+            ),
         )
-        session.add(row)
-        session.flush()
         persisted.append(
             PersistedOpportunity(
                 id=row.id,

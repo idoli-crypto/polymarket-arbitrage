@@ -17,22 +17,26 @@ async function request(path, { allowNotFound = false } = {}) {
 }
 
 async function main() {
-  const [opportunities, simulations, kpi, systemStatus] = await Promise.all([
-    request("/opportunities"),
-    request("/simulations"),
+  const [recommendationStatus, recommendations, kpi, kpiRun, systemStatus] = await Promise.all([
+    request("/recommendations/status"),
+    request("/recommendations?limit=5&sort=score"),
     request("/kpi/latest", { allowNotFound: true }),
+    request("/kpi/runs/latest", { allowNotFound: true }),
     request("/system/status"),
   ]);
 
   const html = renderToStaticMarkup(
     React.createElement(DashboardView, {
-      dashboard: { opportunities, simulations, kpi, systemStatus },
+      routeName: "overview",
+      overviewData: {
+        recommendationStatus,
+        topRecommendations: recommendations,
+        kpi,
+        kpiRun,
+        systemStatus,
+      },
       loading: false,
       error: null,
-      filterText: "",
-      sortKey: "newest",
-      onFilterTextChange: () => {},
-      onSortKeyChange: () => {},
     }),
   );
 
