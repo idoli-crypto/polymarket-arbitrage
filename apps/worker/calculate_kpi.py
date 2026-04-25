@@ -4,7 +4,7 @@ import logging
 
 from sqlalchemy import func, select
 
-from apps.api.db.models import KpiSnapshot
+from apps.api.db.models import KpiRunSummary, KpiSnapshot
 from apps.api.db.session import SessionLocal
 from apps.worker.metrics.kpi import calculate_and_persist_kpi_snapshot
 
@@ -16,24 +16,30 @@ def main() -> None:
     )
 
     with SessionLocal() as session:
-        snapshot = calculate_and_persist_kpi_snapshot(session)
+        run_summary = calculate_and_persist_kpi_snapshot(session)
+        total_run_summaries = session.scalar(select(func.count()).select_from(KpiRunSummary))
         total_snapshots = session.scalar(select(func.count()).select_from(KpiSnapshot))
 
+    if run_summary is None:
+        logging.info("KPI snapshot completed. no validated opportunities were available for KPI persistence.")
+        return
+
     logging.info(
-        "KPI snapshot completed. snapshot_id=%s total_snapshots=%s total_opportunities=%s valid_opportunities=%s executable=%s partial=%s rejected=%s avg_real_edge=%s avg_fill_ratio=%s false_positive_rate=%s total_intended_capital=%s total_executable_capital=%s created_at=%s",
-        snapshot.id,
+        "KPI snapshot completed. run_summary_id=%s total_run_summaries=%s total_legacy_snapshots=%s total_opportunities=%s valid_after_rule=%s valid_after_semantic=%s valid_after_resolution=%s valid_after_executable=%s valid_after_simulation=%s avg_executable_edge=%s avg_fill_ratio=%s avg_capital_lock=%s false_positive_rate=%s created_at=%s",
+        run_summary.id,
+        total_run_summaries,
         total_snapshots,
-        snapshot.total_opportunities,
-        snapshot.valid_opportunities,
-        snapshot.executable_opportunities,
-        snapshot.partial_opportunities,
-        snapshot.rejected_opportunities,
-        snapshot.avg_real_edge,
-        snapshot.avg_fill_ratio,
-        snapshot.false_positive_rate,
-        snapshot.total_intended_capital,
-        snapshot.total_executable_capital,
-        snapshot.created_at.isoformat(),
+        run_summary.total_opportunities,
+        run_summary.valid_after_rule,
+        run_summary.valid_after_semantic,
+        run_summary.valid_after_resolution,
+        run_summary.valid_after_executable,
+        run_summary.valid_after_simulation,
+        run_summary.avg_executable_edge,
+        run_summary.avg_fill_ratio,
+        run_summary.avg_capital_lock,
+        run_summary.false_positive_rate,
+        run_summary.created_at.isoformat(),
     )
 
 

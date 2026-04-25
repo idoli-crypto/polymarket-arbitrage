@@ -59,6 +59,8 @@ Check order book depth
 Calculate fees
 Estimate slippage
 Calculate net edge
+Executable edge validation is framework-based, but PR 7 only defines a payout contract for Neg Risk long-YES bundles.
+Other detection families remain inconclusive until they get explicit payout contracts.
 4. Semantic Validation Engine
 Validate relationships between markets
 Analyze resolution rules
@@ -161,7 +163,7 @@ Prevent data corruption
 Validate before insert
 4. Future Readiness
 
-System must support future execution:
+System may support separately approved future phases beyond V1, if explicitly approved in later architecture work:
 
 Separation between read and write
 Isolation of execution module
@@ -192,7 +194,7 @@ KPI is calculated
 KPI snapshots are stored
 12. Future Phases
 
-Next phase:
+Possible future phases outside V1 and not part of V2 unless approved separately:
 
 Execution service
 Order management
